@@ -3,14 +3,15 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "lint": "eslint . --quiet",
-    "lint:fix": "eslint . --fix",
-    "typecheck": "tsc -p ./jsconfig.json",
-    "preview": "vite preview"
-  },
+"scripts": {
+  "dev": "vite",
+  "build": "vite build",
+  "start": "node server.js",
+  "lint": "eslint . --quiet",
+  "lint:fix": "eslint . --fix",
+  "typecheck": "tsc -p ./jsconfig.json",
+  "preview": "vite preview"
+},
   "dependencies": {
     "@base44/sdk": "^0.8.38",
     "@base44/vite-plugin": "^1.0.30",
