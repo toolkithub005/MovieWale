@@ -1,0 +1,93 @@
+{
+  "name": "Movie",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Movie title"
+    },
+    "slug": {
+      "type": "string",
+      "description": "URL-friendly slug"
+    },
+    "tmdb_id": {
+      "type": "number",
+      "description": "TMDB movie ID"
+    },
+    "overview": {
+      "type": "string",
+      "description": "Movie synopsis/overview"
+    },
+    "poster_path": {
+      "type": "string",
+      "description": "TMDB poster image path"
+    },
+    "backdrop_path": {
+      "type": "string",
+      "description": "TMDB backdrop image path"
+    },
+    "release_date": {
+      "type": "string",
+      "description": "Release date YYYY-MM-DD"
+    },
+    "genre_names": {
+      "type": "string",
+      "description": "Comma-separated genre names"
+    },
+    "original_language": {
+      "type": "string",
+      "description": "Original language code"
+    },
+    "vote_average": {
+      "type": "number",
+      "description": "TMDB rating 0-10"
+    },
+    "vote_count": {
+      "type": "number",
+      "description": "Number of votes"
+    },
+    "popularity": {
+      "type": "number",
+      "description": "TMDB popularity score"
+    },
+    "runtime": {
+      "type": "number",
+      "description": "Runtime in minutes"
+    },
+    "cast": {
+      "type": "string",
+      "description": "Comma-separated top cast names"
+    },
+    "director": {
+      "type": "string",
+      "description": "Director name"
+    },
+    "trailer_key": {
+      "type": "string",
+      "description": "YouTube trailer video key"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "now_playing",
+        "popular",
+        "top_rated",
+        "upcoming"
+      ],
+      "description": "Movie category"
+    },
+    "external_url": {
+      "type": "string",
+      "description": "External movie link (e.g. URLShortX). Shown transparently as 'Movie Link' on the detail page."
+    },
+    "adult": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "title",
+    "slug",
+    "tmdb_id"
+  ]
+}
