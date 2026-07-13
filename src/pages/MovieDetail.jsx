@@ -31,13 +31,6 @@ import EmptyState from "@/components/EmptyState";
  */
 const TMDB_API_URL = "/api/tmdb";
 
-/*
- * ShrinkEarn is still browser-side for now.
- * We can move this server-side later.
- */
-const SHRINKEARN_API_KEY =
-  import.meta.env.VITE_SHRINKEARN_API_KEY;
-
 /**
  * Generate SEO-friendly movie URL slug.
  *
@@ -107,48 +100,15 @@ async function fetchTMDB(endpoint) {
  * Create ShrinkEarn short URL.
  */
 async function createShortLink(destinationUrl) {
-  if (!SHRINKEARN_API_KEY) {
-    throw new Error(
-      "ShrinkEarn API key is missing."
-    );
-  }
+  const response = await fetch(
+    `/api/shorten?url=${encodeURIComponent(destinationUrl)}`
+  );
 
-  const params = new URLSearchParams({
-    api: SHRINKEARN_API_KEY,
-    url: destinationUrl,
-  });
-
-  const apiUrl =
-    `https://shrinkearn.com/api?${params.toString()}`;
-
-  const response = await fetch(apiUrl);
-
-  const rawResponse =
-    await response.text();
+  const data = await response.json();
 
   if (!response.ok) {
     throw new Error(
-      `ShrinkEarn HTTP ${response.status}`
-    );
-  }
-
-  /*
-   * Some URL shorteners may return
-   * the shortened URL directly.
-   */
-  if (
-    rawResponse.trim().startsWith("http")
-  ) {
-    return rawResponse.trim();
-  }
-
-  let data;
-
-  try {
-    data = JSON.parse(rawResponse);
-  } catch {
-    throw new Error(
-      "Invalid response from link service."
+      data.error || "Failed to create short link"
     );
   }
 
@@ -156,14 +116,12 @@ async function createShortLink(destinationUrl) {
     data.shortenedUrl ||
     data.shortened_url ||
     data.short_url ||
-    data.url ||
-    data.result;
+    data.url;
 
   if (!shortUrl) {
+    console.error("Unexpected ShrinkEarn response:", data);
     throw new Error(
-      data.message ||
-        data.error ||
-        "No shortened URL returned."
+      "Short URL was not returned by ShrinkEarn"
     );
   }
 
@@ -441,48 +399,40 @@ export default function MovieDetail() {
     }
   }
 
-  async function handleExternalLink() {
-    if (
-      !movie ||
-      openingLink
-    ) {
-      return;
-    }
+async function handleExternalLink() {
+  if (!movie?.id || openingLink) {
+    return;
+  }
 
+  try {
     setOpeningLink(true);
     setLinkError("");
 
-    try {
-      /*
-       * Current legitimate destination:
-       * official TMDB movie information page.
-       */
-      const destinationUrl =
-        `https://www.themoviedb.org/movie/${movie.id}`;
+    const destinationUrl =
+      `https://www.themoviedb.org/movie/${movie.id}`;
 
-      const shortUrl =
-        await createShortLink(
-          destinationUrl
-        );
+    const shortUrl =
+      await createShortLink(destinationUrl);
 
-      window.open(
-        shortUrl,
-        "_blank",
-        "noopener,noreferrer"
-      );
-    } catch (err) {
-      console.error(
-        "Failed to create short link:",
-        err
-      );
+    window.open(
+      shortUrl,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  } catch (error) {
+    console.error(
+      "Failed to create short link:",
+      error
+    );
 
-      setLinkError(
+    setLinkError(
+      error.message ||
         "Unable to open the external link. Please try again."
-      );
-    } finally {
-      setOpeningLink(false);
-    }
+    );
+  } finally {
+    setOpeningLink(false);
   }
+}
 
   /*
    * Loading
