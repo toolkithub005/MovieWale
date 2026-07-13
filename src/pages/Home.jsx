@@ -1,14 +1,80 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
+
 import HeroSection from "@/components/HeroSection";
 import MovieGrid from "@/components/MovieGrid";
 import GenreNav from "@/components/GenreNav";
 import LoadingSpinner from "@/components/LoadingSpinner";
-import { SITE_NAME, SITE_TAGLINE, LANGUAGES } from "@/lib/constants";
 import LanguageNav from "@/components/LanguageNav";
 import SeoContent from "@/components/SeoContent";
 
-const TMDB_API_URL = "https://api.themoviedb.org/3";
-const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY;
+import {
+  SITE_NAME,
+  SITE_TAGLINE,
+  LANGUAGES,
+} from "@/lib/constants";
+
+const TMDB_API_URL = "/api/tmdb";
+
+/**
+ * Call our own server-side TMDB proxy.
+ *
+ * Browser:
+ * /api/tmdb/movie/popular
+ *
+ * Server:
+ * https://api.themoviedb.org/3/movie/popular
+ */
+async function fetchTMDB(endpoint) {
+  const response = await fetch(
+    `${TMDB_API_URL}${endpoint}`
+  );
+
+  if (!response.ok) {
+    let message = `Movie API error: ${response.status}`;
+
+    try {
+      const data = await response.json();
+
+      message =
+        data.status_message ||
+        data.error ||
+        message;
+    } catch {
+      // Response was not JSON
+    }
+
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetch one movie category.
+ */
+async function fetchMovies(endpoint, category) {
+  const data = await fetchTMDB(
+    `${endpoint}?language=en-US&page=1`
+  );
+
+  return (data.results || [])
+    .filter((movie) => movie.poster_path)
+    .map((movie) => ({
+      ...movie,
+
+      // Keep compatibility with existing components
+      tmdb_id: movie.id,
+      movie_id: movie.id,
+      category,
+
+      rating: movie.vote_average,
+      popularity: movie.popularity,
+
+      release_year: movie.release_date
+        ? movie.release_date.substring(0, 4)
+        : null,
+    }));
+}
 
 export default function Home() {
   const [movies, setMovies] = useState({
@@ -18,79 +84,65 @@ export default function Home() {
     upcoming: [],
   });
 
-  const [recentlyAdded, setRecentlyAdded] = useState([]);
-  const [availableLanguages, setAvailableLanguages] = useState([]);
+  const [recentlyAdded, setRecentlyAdded] =
+    useState([]);
+
+  const [
+    availableLanguages,
+    setAvailableLanguages,
+  ] = useState([]);
+
   const [loading, setLoading] = useState(true);
-  const [heroMovie, setHeroMovie] = useState(null);
+  const [heroMovie, setHeroMovie] =
+    useState(null);
+
   const [error, setError] = useState("");
 
   useEffect(() => {
-    document.title = `${SITE_NAME} — ${SITE_TAGLINE}`;
+    document.title =
+      `${SITE_NAME} — ${SITE_TAGLINE}`;
+
     loadMovies();
   }, []);
-
-  /**
-   * Fetch a movie category from TMDB.
-   */
-  async function fetchMovies(endpoint, category) {
-    const url =
-      `${TMDB_API_URL}${endpoint}` +
-      `?api_key=${TMDB_API_KEY}` +
-      `&language=en-US` +
-      `&page=1`;
-
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error(
-        `TMDB request failed for ${category}: ${response.status}`
-      );
-    }
-
-    const data = await response.json();
-
-    return (data.results || []).map((movie) => {
-  const titleSlug = movie.title
-    ?.toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-  return {
-    ...movie,
-    category,
-    tmdb_id: movie.id,
-    movie_id: movie.id,
-    slug: `${movie.id}-${titleSlug || "movie"}`,
-    release_year: movie.release_date
-      ? movie.release_date.substring(0, 4)
-      : null,
-  };
-});
-  }
 
   async function loadMovies() {
     try {
       setLoading(true);
       setError("");
 
-      if (!TMDB_API_KEY) {
-        throw new Error(
-          "VITE_TMDB_API_KEY is missing. Add it to your .env file."
-        );
-      }
-
-      // Fetch all movie sections in parallel
+      /**
+       * No TMDB API key is used here.
+       *
+       * The frontend calls:
+       * /api/tmdb/...
+       *
+       * server.js adds the API key.
+       */
       const [
         nowPlayingMovies,
         popularMovies,
         topRatedMovies,
         upcomingMovies,
       ] = await Promise.all([
-        fetchMovies("/movie/now_playing", "now_playing"),
-        fetchMovies("/movie/popular", "popular"),
-        fetchMovies("/movie/top_rated", "top_rated"),
-        fetchMovies("/movie/upcoming", "upcoming"),
+        fetchMovies(
+          "/movie/now_playing",
+          "now_playing"
+        ),
+
+        fetchMovies(
+          "/movie/popular",
+          "popular"
+        ),
+
+        fetchMovies(
+          "/movie/top_rated",
+          "top_rated"
+        ),
+
+        fetchMovies(
+          "/movie/upcoming",
+          "upcoming"
+        ),
       ]);
 
       const grouped = {
@@ -103,7 +155,7 @@ export default function Home() {
       setMovies(grouped);
 
       /**
-       * Combine all movies and remove duplicates.
+       * Combine all categories.
        */
       const allMovies = [
         ...nowPlayingMovies,
@@ -112,71 +164,104 @@ export default function Home() {
         ...upcomingMovies,
       ];
 
+      /**
+       * Remove duplicate movies.
+       */
       const uniqueMovies = Array.from(
-        new Map(allMovies.map((movie) => [movie.id, movie])).values()
+        new Map(
+          allMovies.map((movie) => [
+            movie.id,
+            movie,
+          ])
+        ).values()
       );
 
       /**
-       * Select a hero movie.
-       * Prefer popular movies that have both:
-       * - backdrop image
-       * - overview
+       * Select random hero movie from
+       * the first five suitable popular movies.
        */
       const heroPool = popularMovies
-        .filter((movie) => movie.backdrop_path && movie.overview)
+        .filter(
+          (movie) =>
+            movie.backdrop_path &&
+            movie.overview
+        )
         .slice(0, 5);
 
       if (heroPool.length > 0) {
         const randomHero =
-          heroPool[Math.floor(Math.random() * heroPool.length)];
+          heroPool[
+            Math.floor(
+              Math.random() * heroPool.length
+            )
+          ];
 
         setHeroMovie(randomHero);
+      } else {
+        setHeroMovie(null);
       }
 
       /**
        * Recently Added
        *
-       * TMDB does not provide Base44's created_date field,
-       * so use release_date instead.
+       * Use release_date because TMDB does
+       * not provide Base44 created_date.
        */
       const recent = [...uniqueMovies]
-        .filter((movie) => movie.release_date)
+        .filter(
+          (movie) => movie.release_date
+        )
         .sort(
           (a, b) =>
-            new Date(b.release_date).getTime() -
-            new Date(a.release_date).getTime()
+            new Date(
+              b.release_date
+            ).getTime() -
+            new Date(
+              a.release_date
+            ).getTime()
         )
         .slice(0, 12);
 
       setRecentlyAdded(recent);
 
       /**
-       * Detect languages available in fetched movies.
+       * Find languages represented in
+       * currently loaded movies.
        */
       const langCodes = [
         ...new Set(
           uniqueMovies
-            .map((movie) => movie.original_language)
+            .map(
+              (movie) =>
+                movie.original_language
+            )
             .filter(Boolean)
         ),
       ];
 
-      const languages = LANGUAGES.filter((language) =>
-        langCodes.includes(language.code)
-      );
+      const languages =
+        LANGUAGES.filter((language) =>
+          langCodes.includes(
+            language.code
+          )
+        );
 
       setAvailableLanguages(languages);
     } catch (err) {
-      console.error("Failed to load movies:", err);
-      setError(err.message || "Unable to load movies.");
+      console.error(
+        "Failed to load movies:",
+        err
+      );
+
+      setError(
+        err.message ||
+          "Unable to load movies."
+      );
     } finally {
       setLoading(false);
     }
   }
 
-  /**
-   * Loading screen
-   */
   if (loading) {
     return (
       <div className="min-h-screen bg-[#050505] pt-20">
@@ -185,9 +270,6 @@ export default function Home() {
     );
   }
 
-  /**
-   * Error screen
-   */
   if (error) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#050505] px-4 text-white">
@@ -196,9 +278,12 @@ export default function Home() {
             Unable to load movies
           </h1>
 
-          <p className="mb-6 text-gray-400">{error}</p>
+          <p className="mb-6 text-gray-400">
+            {error}
+          </p>
 
           <button
+            type="button"
             onClick={loadMovies}
             className="rounded-lg bg-red-600 px-6 py-3 font-medium transition hover:bg-red-700"
           >
@@ -217,7 +302,10 @@ export default function Home() {
         <GenreNav />
 
         <MovieGrid
-          movies={movies.now_playing.slice(0, 12)}
+          movies={movies.now_playing.slice(
+            0,
+            12
+          )}
           title="Latest Movies"
         />
 
@@ -227,21 +315,32 @@ export default function Home() {
         />
 
         <MovieGrid
-          movies={movies.popular.slice(0, 12)}
+          movies={movies.popular.slice(
+            0,
+            12
+          )}
           title="Popular Movies"
         />
 
         {availableLanguages.length > 0 && (
-          <LanguageNav languages={availableLanguages} />
+          <LanguageNav
+            languages={availableLanguages}
+          />
         )}
 
         <MovieGrid
-          movies={movies.top_rated.slice(0, 12)}
+          movies={movies.top_rated.slice(
+            0,
+            12
+          )}
           title="Top Rated"
         />
 
         <MovieGrid
-          movies={movies.upcoming.slice(0, 12)}
+          movies={movies.upcoming.slice(
+            0,
+            12
+          )}
           title="Upcoming"
         />
 

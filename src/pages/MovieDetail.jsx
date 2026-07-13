@@ -20,42 +20,97 @@ import MovieGrid from "@/components/MovieGrid";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import EmptyState from "@/components/EmptyState";
 
-const TMDB_API_URL = "https://api.themoviedb.org/3";
-const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY;
-const SHRINKEARN_API_KEY = import.meta.env.VITE_SHRINKEARN_API_KEY;
+/*
+ * All TMDB requests go through our Express server.
+ *
+ * Browser:
+ * /api/tmdb/movie/123
+ *
+ * Express server:
+ * https://api.themoviedb.org/3/movie/123
+ */
+const TMDB_API_URL = "/api/tmdb";
 
+/*
+ * ShrinkEarn is still browser-side for now.
+ * We can move this server-side later.
+ */
+const SHRINKEARN_API_KEY =
+  import.meta.env.VITE_SHRINKEARN_API_KEY;
+
+/**
+ * Generate SEO-friendly movie URL slug.
+ *
+ * Example:
+ * 1083381-some-movie-title
+ */
 function createMovieSlug(movie) {
-  const titleSlug = movie.title
-    ?.toLowerCase()
+  if (!movie?.id) {
+    return null;
+  }
+
+  const titleSlug = (movie.title || "movie")
+    .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-  return `${movie.id}-${titleSlug || "movie"}`;
+  return `${movie.id}-${titleSlug}`;
 }
 
-function getMovieIdFromSlug(slug) {
-  const match = slug?.match(/^(\d+)/);
+/**
+ * Extract TMDB numeric ID from:
+ *
+ * 1083381
+ * 1083381-movie-title
+ */
+function getMovieIdFromSlug(value) {
+  if (!value) {
+    return null;
+  }
+
+  const match = String(value).match(/^(\d+)/);
+
   return match ? match[1] : null;
 }
 
+/**
+ * Call our server-side TMDB proxy.
+ */
 async function fetchTMDB(endpoint) {
-  const separator = endpoint.includes("?") ? "&" : "?";
-
   const response = await fetch(
-    `${TMDB_API_URL}${endpoint}${separator}api_key=${TMDB_API_KEY}`
+    `${TMDB_API_URL}${endpoint}`
   );
 
   if (!response.ok) {
-    throw new Error(`TMDB API error: ${response.status}`);
+    let message =
+      `Movie API error: ${response.status}`;
+
+    try {
+      const data = await response.json();
+
+      message =
+        data.status_message ||
+        data.error ||
+        message;
+    } catch {
+      // Ignore invalid JSON response
+    }
+
+    throw new Error(message);
   }
 
   return response.json();
 }
 
+/**
+ * Create ShrinkEarn short URL.
+ */
 async function createShortLink(destinationUrl) {
   if (!SHRINKEARN_API_KEY) {
-    throw new Error("ShrinkEarn API key is missing.");
+    throw new Error(
+      "ShrinkEarn API key is missing."
+    );
   }
 
   const params = new URLSearchParams({
@@ -63,19 +118,28 @@ async function createShortLink(destinationUrl) {
     url: destinationUrl,
   });
 
-  const apiUrl = `https://shrinkearn.com/api?${params.toString()}`;
+  const apiUrl =
+    `https://shrinkearn.com/api?${params.toString()}`;
 
   const response = await fetch(apiUrl);
 
-  const rawResponse = await response.text();
-
-  console.log("ShrinkEarn status:", response.status);
-  console.log("ShrinkEarn raw response:", rawResponse);
+  const rawResponse =
+    await response.text();
 
   if (!response.ok) {
     throw new Error(
-      `ShrinkEarn HTTP ${response.status}: ${rawResponse}`
+      `ShrinkEarn HTTP ${response.status}`
     );
+  }
+
+  /*
+   * Some URL shorteners may return
+   * the shortened URL directly.
+   */
+  if (
+    rawResponse.trim().startsWith("http")
+  ) {
+    return rawResponse.trim();
   }
 
   let data;
@@ -83,19 +147,11 @@ async function createShortLink(destinationUrl) {
   try {
     data = JSON.parse(rawResponse);
   } catch {
-    // Some shortener APIs return the shortened URL as plain text
-    if (rawResponse.startsWith("http")) {
-      return rawResponse.trim();
-    }
-
     throw new Error(
-      `Unexpected ShrinkEarn response: ${rawResponse}`
+      "Invalid response from link service."
     );
   }
 
-  console.log("ShrinkEarn JSON:", data);
-
-  // Support several possible response formats
   const shortUrl =
     data.shortenedUrl ||
     data.shortened_url ||
@@ -107,7 +163,7 @@ async function createShortLink(destinationUrl) {
     throw new Error(
       data.message ||
         data.error ||
-        `No shortened URL returned: ${rawResponse}`
+        "No shortened URL returned."
     );
   }
 
@@ -115,50 +171,100 @@ async function createShortLink(destinationUrl) {
 }
 
 export default function MovieDetail() {
-  const { slug } = useParams();
+  /*
+   * Supports route parameters named:
+   *
+   * /movie/:slug
+   * /movie/:movieSlug
+   * /movie/:id
+   */
+  const params = useParams();
 
-  const [movie, setMovie] = useState(null);
-  const [related, setRelated] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [notFound, setNotFound] = useState(false);
+  const routeValue =
+    params.slug ||
+    params.movieSlug ||
+    params.id;
 
-  const [openingLink, setOpeningLink] = useState(false);
-  const [linkError, setLinkError] = useState("");
+  const [movie, setMovie] =
+    useState(null);
+
+  const [related, setRelated] =
+    useState([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [notFound, setNotFound] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const [openingLink, setOpeningLink] =
+    useState(false);
+
+  const [linkError, setLinkError] =
+    useState("");
 
   useEffect(() => {
-    loadMovie();
     window.scrollTo(0, 0);
-  }, [slug]);
+
+    loadMovie();
+  }, [routeValue]);
 
   async function loadMovie() {
     setLoading(true);
     setNotFound(false);
     setMovie(null);
     setRelated([]);
+    setError("");
     setLinkError("");
 
     try {
-      if (!TMDB_API_KEY) {
-        throw new Error("VITE_TMDB_API_KEY is missing.");
-      }
-
-      const movieId = getMovieIdFromSlug(slug);
+      /*
+       * Extract numeric TMDB movie ID.
+       */
+      const movieId =
+        getMovieIdFromSlug(routeValue);
 
       if (!movieId) {
+        console.error(
+          "Invalid movie URL:",
+          routeValue
+        );
+
         setNotFound(true);
         return;
       }
 
+      /*
+       * Fetch:
+       *
+       * Movie details
+       * Credits
+       * Videos
+       * Recommendations
+       */
       const data = await fetchTMDB(
-        `/movie/${movieId}?language=en-US&append_to_response=credits,videos,recommendations`
+        `/movie/${movieId}` +
+          `?language=en-US` +
+          `&append_to_response=credits,videos,recommendations`
       );
 
+      /*
+       * Find director.
+       */
       const director =
         data.credits?.crew?.find(
-          (person) => person.job === "Director"
+          (person) =>
+            person.job === "Director"
         )?.name || "";
 
-      const videos = data.videos?.results || [];
+      /*
+       * Find best available YouTube trailer.
+       */
+      const videos =
+        data.videos?.results || [];
 
       const trailer =
         videos.find(
@@ -171,92 +277,204 @@ export default function MovieDetail() {
           (video) =>
             video.site === "YouTube" &&
             video.type === "Trailer"
+        ) ||
+        videos.find(
+          (video) =>
+            video.site === "YouTube"
         );
 
+      /*
+       * Normalize movie data so it remains
+       * compatible with existing components.
+       */
       const normalizedMovie = {
         ...data,
+
+        id: data.id,
         tmdb_id: data.id,
-        slug: createMovieSlug(data),
+        movie_id: data.id,
+
+        slug:
+          createMovieSlug(data),
+
         director,
-        trailer_key: trailer?.key || null,
+
+        trailer_key:
+          trailer?.key || null,
+
+        release_year:
+          data.release_date
+            ? data.release_date.substring(
+                0,
+                4
+              )
+            : null,
+
+        rating:
+          data.vote_average,
+
+        popularity:
+          data.popularity,
       };
 
       setMovie(normalizedMovie);
 
+      /*
+       * Normalize related movies.
+       *
+       * Adding id + slug is important so
+       * MovieGrid can generate valid links.
+       */
       const normalizedRelated =
-        data.recommendations?.results
-          ?.filter((item) => item.poster_path)
-          .slice(0, 6)
+        (
+          data.recommendations
+            ?.results || []
+        )
+          .filter(
+            (item) =>
+              item.id &&
+              item.title &&
+              item.poster_path
+          )
+          .slice(0, 12)
           .map((item) => ({
             ...item,
+
+            id: item.id,
             tmdb_id: item.id,
-            slug: createMovieSlug(item),
-            release_year: item.release_date
-              ? item.release_date.substring(0, 4)
-              : null,
-          })) || [];
+            movie_id: item.id,
 
-      setRelated(normalizedRelated);
+            slug:
+              createMovieSlug(item),
 
-      const year = data.release_date
-        ? data.release_date.substring(0, 4)
-        : "";
+            release_year:
+              item.release_date
+                ? item.release_date.substring(
+                    0,
+                    4
+                  )
+                : null,
+
+            rating:
+              item.vote_average,
+
+            popularity:
+              item.popularity,
+          }));
+
+      setRelated(
+        normalizedRelated
+      );
+
+      /*
+       * SEO title.
+       */
+      const year =
+        data.release_date
+          ? data.release_date.substring(
+              0,
+              4
+            )
+          : "";
 
       document.title =
         `${data.title}` +
         `${year ? ` (${year})` : ""}` +
         ` – Cast, Trailer & Movie Details | ${SITE_NAME}`;
 
-      const description = data.overview
-        ? data.overview.substring(0, 160)
-        : `${data.title} — cast, trailer and movie details on ${SITE_NAME}.`;
+      /*
+       * SEO description.
+       */
+      const description =
+        data.overview
+          ? data.overview.substring(
+              0,
+              160
+            )
+          : `${data.title} — cast, trailer and movie details on ${SITE_NAME}.`;
 
-      let metaDesc = document.querySelector(
-        'meta[name="description"]'
-      );
+      let metaDescription =
+        document.querySelector(
+          'meta[name="description"]'
+        );
 
-      if (!metaDesc) {
-        metaDesc = document.createElement("meta");
-        metaDesc.name = "description";
-        document.head.appendChild(metaDesc);
+      if (!metaDescription) {
+        metaDescription =
+          document.createElement(
+            "meta"
+          );
+
+        metaDescription.name =
+          "description";
+
+        document.head.appendChild(
+          metaDescription
+        );
       }
 
-      metaDesc.setAttribute("content", description);
-    } catch (error) {
-      console.error("Failed to load movie:", error);
-      setNotFound(true);
+      metaDescription.setAttribute(
+        "content",
+        description
+      );
+    } catch (err) {
+      console.error(
+        "Failed to load movie:",
+        err
+      );
+
+      /*
+       * 404 = movie does not exist.
+       * Other errors should display separately.
+       */
+      if (
+        err.message?.includes("404")
+      ) {
+        setNotFound(true);
+      } else {
+        setError(
+          err.message ||
+            "Unable to load movie."
+        );
+      }
     } finally {
       setLoading(false);
     }
   }
 
   async function handleExternalLink() {
-    if (!movie || openingLink) return;
+    if (
+      !movie ||
+      openingLink
+    ) {
+      return;
+    }
 
     setOpeningLink(true);
     setLinkError("");
 
     try {
       /*
-       * The actual destination after the ShrinkEarn
-       * advertising/interstitial flow.
-       *
-       * Currently this goes to the movie's TMDB page.
-       * Replace this later with another legitimate destination
-       * if required.
+       * Current legitimate destination:
+       * official TMDB movie information page.
        */
       const destinationUrl =
         `https://www.themoviedb.org/movie/${movie.id}`;
 
-      const shortUrl = await createShortLink(destinationUrl);
+      const shortUrl =
+        await createShortLink(
+          destinationUrl
+        );
 
       window.open(
         shortUrl,
         "_blank",
         "noopener,noreferrer"
       );
-    } catch (error) {
-      console.error("Failed to create short link:", error);
+    } catch (err) {
+      console.error(
+        "Failed to create short link:",
+        err
+      );
 
       setLinkError(
         "Unable to open the external link. Please try again."
@@ -266,6 +484,9 @@ export default function MovieDetail() {
     }
   }
 
+  /*
+   * Loading
+   */
   if (loading) {
     return (
       <div className="min-h-screen bg-[#050505] pt-24">
@@ -274,7 +495,40 @@ export default function MovieDetail() {
     );
   }
 
-  if (notFound || !movie) {
+  /*
+   * Error
+   */
+  if (error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#050505] px-4 pt-24 text-white">
+        <div className="max-w-lg text-center">
+          <h1 className="mb-3 text-2xl font-bold">
+            Unable to load movie
+          </h1>
+
+          <p className="mb-6 text-[#888]">
+            {error}
+          </p>
+
+          <button
+            type="button"
+            onClick={loadMovie}
+            className="rounded-lg bg-red-600 px-6 py-3 font-semibold text-white transition hover:bg-red-700"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /*
+   * Movie not found
+   */
+  if (
+    notFound ||
+    !movie
+  ) {
     return (
       <div className="min-h-screen bg-[#050505] pt-24">
         <EmptyState
@@ -285,34 +539,47 @@ export default function MovieDetail() {
     );
   }
 
-  const backdropUrl = getBackdropUrl(
-    movie.backdrop_path,
-    "original"
-  );
+  const backdropUrl =
+    getBackdropUrl(
+      movie.backdrop_path,
+      "original"
+    );
 
-  const posterUrl = getPosterUrl(
-    movie.poster_path,
-    "large"
-  );
+  const posterUrl =
+    getPosterUrl(
+      movie.poster_path,
+      "large"
+    );
 
-  const formattedDate = movie.release_date
-    ? new Date(movie.release_date).toLocaleDateString(
-        "en-US",
-        {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        }
-      )
-    : "";
+  const formattedDate =
+    movie.release_date
+      ? new Date(
+          movie.release_date
+        ).toLocaleDateString(
+          "en-US",
+          {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          }
+        )
+      : "";
 
-  const hasRating = Number(movie.vote_average) > 0;
+  const hasRating =
+    Number(
+      movie.vote_average
+    ) > 0;
 
   const genres =
-    movie.genres?.map((genre) => genre.name) || [];
+    movie.genres?.map(
+      (genre) => genre.name
+    ) || [];
 
   const castList =
-    movie.credits?.cast?.slice(0, 10) || [];
+    movie.credits?.cast?.slice(
+      0,
+      10
+    ) || [];
 
   return (
     <>
@@ -366,7 +633,7 @@ export default function MovieDetail() {
             )}
           </div>
 
-          {/* Details */}
+          {/* Movie information */}
           <div className="pt-2 md:pt-0">
             <h1 className="text-3xl font-extrabold tracking-tight text-white md:text-4xl lg:text-5xl">
               {movie.title}
@@ -379,12 +646,16 @@ export default function MovieDetail() {
                   <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
 
                   <span className="font-bold text-yellow-400">
-                    {Number(movie.vote_average).toFixed(1)}
+                    {Number(
+                      movie.vote_average
+                    ).toFixed(1)}
                   </span>
 
                   {movie.vote_count > 0 && (
                     <span className="text-xs text-[#888]">
-                      ({movie.vote_count.toLocaleString()} votes)
+                      (
+                      {movie.vote_count.toLocaleString()}{" "}
+                      votes)
                     </span>
                   )}
                 </div>
@@ -401,14 +672,19 @@ export default function MovieDetail() {
                 <span className="flex items-center gap-1 text-[#D4D4D4]">
                   <Clock className="h-3.5 w-3.5" />
 
-                  {Math.floor(movie.runtime / 60)}h{" "}
-                  {movie.runtime % 60}m
+                  {Math.floor(
+                    movie.runtime / 60
+                  )}
+                  h{" "}
+                  {movie.runtime % 60}
+                  m
                 </span>
               )}
 
               {movie.original_language && (
                 <span className="flex items-center gap-1 text-[#D4D4D4]">
                   <Globe className="h-3.5 w-3.5" />
+
                   {movie.original_language.toUpperCase()}
                 </span>
               )}
@@ -417,14 +693,16 @@ export default function MovieDetail() {
             {/* Genres */}
             {genres.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-2">
-                {genres.map((genre) => (
-                  <span
-                    key={genre}
-                    className="rounded-full border border-[#1a1a1a] px-3 py-1 text-xs font-medium text-[#D4D4D4]"
-                  >
-                    {genre}
-                  </span>
-                ))}
+                {genres.map(
+                  (genre) => (
+                    <span
+                      key={genre}
+                      className="rounded-full border border-[#1a1a1a] px-3 py-1 text-xs font-medium text-[#D4D4D4]"
+                    >
+                      {genre}
+                    </span>
+                  )
+                )}
               </div>
             )}
 
@@ -462,14 +740,16 @@ export default function MovieDetail() {
                 </h2>
 
                 <div className="flex flex-wrap gap-2">
-                  {castList.map((actor) => (
-                    <span
-                      key={actor.id}
-                      className="rounded bg-[#0F0F0F] px-3 py-1.5 text-xs text-[#D4D4D4]"
-                    >
-                      {actor.name}
-                    </span>
-                  ))}
+                  {castList.map(
+                    (actor) => (
+                      <span
+                        key={actor.id}
+                        className="rounded bg-[#0F0F0F] px-3 py-1.5 text-xs text-[#D4D4D4]"
+                      >
+                        {actor.name}
+                      </span>
+                    )
+                  )}
                 </div>
               </div>
             )}
@@ -494,7 +774,7 @@ export default function MovieDetail() {
               </div>
             )}
 
-            {/* TMDB link */}
+            {/* TMDB */}
             <div className="mt-6">
               <a
                 href={`https://www.themoviedb.org/movie/${movie.id}`}
@@ -507,12 +787,16 @@ export default function MovieDetail() {
               </a>
             </div>
 
-            {/* Monetized external link */}
+            {/* External link */}
             <div className="mt-6">
               <button
                 type="button"
-                onClick={handleExternalLink}
-                disabled={openingLink}
+                onClick={
+                  handleExternalLink
+                }
+                disabled={
+                  openingLink
+                }
                 className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-6 py-3 font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {openingLink ? (
@@ -529,9 +813,12 @@ export default function MovieDetail() {
               </button>
 
               <p className="mt-3 max-w-xl text-xs leading-relaxed text-[#666]">
-                You are leaving MovieWale and opening an external
-                website. The external service may display advertising
-                before reaching the destination.
+                You are leaving MovieWale
+                and opening an external
+                website. The external
+                service may display
+                advertising before reaching
+                the destination.
               </p>
 
               {linkError && (
@@ -543,7 +830,7 @@ export default function MovieDetail() {
           </div>
         </div>
 
-        {/* Related movies */}
+        {/* Related Movies */}
         {related.length > 0 && (
           <MovieGrid
             movies={related}
@@ -552,17 +839,21 @@ export default function MovieDetail() {
         )}
       </div>
 
-      {/* Structured data */}
+      {/* Structured Data */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
           __html: JSON.stringify({
-            "@context": "https://schema.org",
+            "@context":
+              "https://schema.org",
+
             "@type": "Movie",
+
             name: movie.title,
 
             ...(movie.overview && {
-              description: movie.overview,
+              description:
+                movie.overview,
             }),
 
             ...(posterUrl && {
@@ -570,21 +861,29 @@ export default function MovieDetail() {
             }),
 
             ...(movie.release_date && {
-              datePublished: movie.release_date,
+              datePublished:
+                movie.release_date,
             }),
 
             ...(movie.director && {
               director: {
                 "@type": "Person",
-                name: movie.director,
+                name:
+                  movie.director,
               },
             }),
 
             ...(castList.length > 0 && {
-              actor: castList.map((actor) => ({
-                "@type": "Person",
-                name: actor.name,
-              })),
+              actor:
+                castList.map(
+                  (actor) => ({
+                    "@type":
+                      "Person",
+
+                    name:
+                      actor.name,
+                  })
+                ),
             }),
 
             ...(genres.length > 0 && {
@@ -594,10 +893,16 @@ export default function MovieDetail() {
             ...(hasRating &&
               movie.vote_count > 0 && {
                 aggregateRating: {
-                  "@type": "AggregateRating",
-                  ratingValue: movie.vote_average,
+                  "@type":
+                    "AggregateRating",
+
+                  ratingValue:
+                    movie.vote_average,
+
                   bestRating: 10,
-                  ratingCount: movie.vote_count,
+
+                  ratingCount:
+                    movie.vote_count,
                 },
               }),
           }),

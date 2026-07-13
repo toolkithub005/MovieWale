@@ -6,22 +6,29 @@ import Breadcrumb from "@/components/Breadcrumb";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import EmptyState from "@/components/EmptyState";
 
-const TMDB_API_URL = "https://api.themoviedb.org/3";
-const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY;
+const TMDB_API_URL = "/api/tmdb";
 
 async function fetchTMDB(endpoint) {
-  if (!TMDB_API_KEY) {
-    throw new Error("VITE_TMDB_API_KEY is missing.");
-  }
-
-  const separator = endpoint.includes("?") ? "&" : "?";
-
   const response = await fetch(
-    `${TMDB_API_URL}${endpoint}${separator}api_key=${TMDB_API_KEY}`
+    `${TMDB_API_URL}${endpoint}`
   );
 
   if (!response.ok) {
-    throw new Error(`TMDB API error: ${response.status}`);
+    let message =
+      `Movie API error: ${response.status}`;
+
+    try {
+      const data = await response.json();
+
+      message =
+        data.status_message ||
+        data.error ||
+        message;
+    } catch {
+      // Ignore invalid JSON
+    }
+
+    throw new Error(message);
   }
 
   return response.json();

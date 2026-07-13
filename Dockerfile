@@ -9,23 +9,24 @@ RUN npm ci
 
 COPY . .
 
-# Vite environment variables are embedded at build time
-ARG VITE_TMDB_API_KEY
-ARG VITE_API_BASE_URL
-
-ENV VITE_TMDB_API_KEY=$VITE_TMDB_API_KEY
-ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
-
 RUN npm run build
 
 
 # ---------- Production stage ----------
-FROM nginx:alpine
+FROM node:20-alpine
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+WORKDIR /app
 
-COPY --from=build /app/dist /usr/share/nginx/html
+ENV NODE_ENV=production
 
-EXPOSE 80
+COPY package*.json ./
 
-CMD ["nginx", "-g", "daemon off;"]
+RUN npm ci --omit=dev
+
+COPY --from=build /app/dist ./dist
+
+COPY server.js ./server.js
+
+EXPOSE 10000
+
+CMD ["node", "server.js"]
