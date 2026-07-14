@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 
+import Seo from "@/components/Seo";
 import HeroSection from "@/components/HeroSection";
 import MovieGrid from "@/components/MovieGrid";
 import GenreNav from "@/components/GenreNav";
@@ -10,6 +11,9 @@ import SeoContent from "@/components/SeoContent";
 import {
   SITE_NAME,
   SITE_TAGLINE,
+  SITE_DESCRIPTION,
+  SITE_URL,
+  SITE_OG_IMAGE,
   LANGUAGES,
 } from "@/lib/constants";
 
@@ -99,9 +103,6 @@ export default function Home() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    document.title =
-      `${SITE_NAME} — ${SITE_TAGLINE}`;
-
     loadMovies();
   }, []);
 
@@ -296,6 +297,12 @@ export default function Home() {
 
   return (
     <>
+      <Seo
+        title={`${SITE_NAME} — ${SITE_TAGLINE}`}
+        description={SITE_DESCRIPTION}
+        url={SITE_URL}
+        image={SITE_OG_IMAGE}
+      />
       <HeroSection movie={heroMovie} />
 
       <div className="mx-auto max-w-7xl px-4 md:px-6">

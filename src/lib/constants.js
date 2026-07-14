@@ -1,6 +1,8 @@
 export const SITE_NAME = "MovieWale";
 export const SITE_TAGLINE = "Discover Movies, Trailers, Reviews & Entertainment";
 export const SITE_DESCRIPTION = "MovieWale — Your ultimate destination for discovering movies, watching trailers, reading reviews, and finding where to watch your favorite films.";
+export const SITE_URL = "https://moviewale.online";
+export const SITE_OG_IMAGE = "https://moviewale.online/og-image.png";
 
 export const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
 export const TMDB_POSTER_SIZES = {

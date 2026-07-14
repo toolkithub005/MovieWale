@@ -1,24 +1,59 @@
 import csv
 import os
 import time
+import tempfile
 import requests
+
+# ============================================================
+# ENV LOADING
+# ============================================================
+
+def load_dotenv(dotenv_path):
+    if not os.path.exists(dotenv_path):
+        return
+
+    with open(dotenv_path, "r", encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            if "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+
+            if key and value and key not in os.environ:
+                os.environ[key] = value
+
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
+
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 
-MAX_PAGES = 50000
+MAX_PAGES = 1000
 REQUEST_DELAY = 0.15
 
-# Save every 1,000 movies
+# Save every 3,000 movies
 SAVE_BATCH_SIZE = 3000
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CSV_FILE = os.path.join(SCRIPT_DIR, "movies.csv")
+CSV_FILE = os.path.join(SCRIPT_DIR, "AllMoviesData.csv")
+
+CATEGORY_ENDPOINTS = [
+    ("now_playing", "/movie/now_playing"),
+    ("upcoming", "/movie/upcoming"),
+    ("trending", "/trending/movie/week"),
+]
 
 
 # ============================================================
@@ -119,132 +154,197 @@ def save_batch_to_csv(movies, write_header=False):
     print()
 
 
+def dedupe_csv():
+    """Remove duplicate rows by `id` in the CSV, keeping the first occurrence.
+
+    Tries common encodings when reading, writes back in UTF-8 with BOM
+    to preserve compatibility with other tools used in this repo.
+    """
+
+    if not os.path.exists(CSV_FILE):
+        print("No CSV to dedupe.")
+        return
+
+    encodings = ["utf-8-sig", "utf-8", "cp1252"]
+    rows = None
+    header = None
+    read_enc = None
+
+    for enc in encodings:
+        try:
+            with open(CSV_FILE, "r", newline="", encoding=enc, errors="replace") as f:
+                reader = csv.DictReader(f)
+                header = reader.fieldnames
+                rows = list(reader)
+            read_enc = enc
+            break
+        except Exception:
+            continue
+
+    if rows is None:
+        print("Failed to read CSV for dedupe; skipping.")
+        return
+
+    seen = set()
+    out_rows = []
+    dup_count = 0
+
+    for r in rows:
+        mid = (r.get("id") or "").strip()
+        if not mid:
+            out_rows.append(r)
+            continue
+        if mid in seen:
+            dup_count += 1
+            continue
+        seen.add(mid)
+        out_rows.append(r)
+
+    if dup_count == 0:
+        print("No duplicate IDs found in CSV.")
+        return
+
+    # Write to temp and replace original
+    dirpath = os.path.dirname(CSV_FILE)
+    fd, tmp_path = tempfile.mkstemp(prefix="AllMoviesData-", suffix=".csv", dir=dirpath)
+    try:
+        with os.fdopen(fd, "w", newline="", encoding="utf-8-sig") as out:
+            writer = csv.DictWriter(out, fieldnames=header)
+            writer.writeheader()
+            for r in out_rows:
+                writer.writerow(r)
+
+        os.replace(tmp_path, CSV_FILE)
+        print(f"Dedupe complete. Removed {dup_count:,} duplicate rows. Wrote cleaned CSV: {CSV_FILE}")
+    except Exception as e:
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+        print("Failed to write deduped CSV:", e)
+
+
 # ============================================================
 # FETCH MOVIES
 # ============================================================
 
+def load_existing_movie_ids():
+    existing_ids = set()
+
+    if not os.path.exists(CSV_FILE):
+        return existing_ids
+
+    for encoding in ("utf-8-sig", "utf-8", "cp1252"):
+        try:
+            with open(
+                CSV_FILE,
+                "r",
+                newline="",
+                encoding=encoding,
+                errors="replace",
+            ) as file:
+                reader = csv.DictReader(file)
+                for row in reader:
+                    movie_id = row.get("id")
+                    if movie_id:
+                        try:
+                            existing_ids.add(int(movie_id))
+                        except ValueError:
+                            continue
+            return existing_ids
+        except UnicodeDecodeError:
+            continue
+        except Exception as error:
+            print(f"Warning: failed to load existing CSV IDs using {encoding}: {error}")
+            return existing_ids
+
+    print(
+        "Warning: failed to load existing CSV IDs. Please check AllMoviesData.csv encoding."
+    )
+    return existing_ids
+
+
 def fetch_movies():
-
-    # Movies waiting to be saved
+    existing_ids = load_existing_movie_ids()
     batch = []
-
-    # Prevent duplicates during this run
-    seen_movie_ids = set()
-
     total_saved = 0
 
-    # Create a new CSV with header
-    save_batch_to_csv([], write_header=True)
-
-    # Because empty batch doesn't create file,
-    # explicitly create the CSV header
-    with open(
-        CSV_FILE,
-        "w",
-        newline="",
-        encoding="utf-8-sig",
-    ) as file:
-
-        writer = csv.DictWriter(
-            file,
-            fieldnames=FIELDS,
-        )
-
-        writer.writeheader()
+    if not os.path.exists(CSV_FILE):
+        save_batch_to_csv([], write_header=True)
 
     session = requests.Session()
 
-    for page in range(1, MAX_PAGES + 1):
+    for category_name, endpoint in CATEGORY_ENDPOINTS:
+        print()
+        print("========================================")
+        print(f"Fetching category: {category_name}")
+        print("========================================")
 
-        print(
-            f"Fetching page {page}/{MAX_PAGES} "
-            f"| Saved: {total_saved:,} "
-            f"| Current batch: {len(batch):,}"
-        )
-
-        url = f"{TMDB_BASE_URL}/discover/movie"
-
-        params = {
-            "api_key": TMDB_API_KEY,
-            "language": "en-US",
-            "sort_by": "popularity.desc",
-            "include_adult": "false",
-            "include_video": "false",
-            "page": page,
-        }
-
-        try:
-            response = session.get(
-                url,
-                params=params,
-                timeout=30,
-            )
-
-            response.raise_for_status()
-
-            data = response.json()
-
-            results = data.get("results", [])
-
-            if not results:
-                print("No more movies found.")
-                break
-
-            for movie in results:
-
-                movie_id = movie.get("id")
-
-                if not movie_id:
-                    continue
-
-                # Extra safety: skip adult movies
-                if movie.get("adult") is True:
-                    continue
-
-                # Skip duplicate movies
-                if movie_id in seen_movie_ids:
-                    continue
-
-                seen_movie_ids.add(movie_id)
-
-                batch.append(movie)
-
-                # Save immediately after reaching 1,000
-                if len(batch) >= SAVE_BATCH_SIZE:
-
-                    save_batch_to_csv(batch)
-
-                    total_saved += len(batch)
-
-                    print(
-                        f"TOTAL SAVED: {total_saved:,} movies"
-                    )
-
-                    # Clear memory after saving
-                    batch.clear()
-
-            time.sleep(REQUEST_DELAY)
-
-        except requests.RequestException as error:
-
+        for page in range(1, MAX_PAGES + 1):
             print(
-                f"Error fetching page {page}: {error}"
+                f"Category={category_name} "
+                f"page={page}/{MAX_PAGES} "
+                f"| Saved: {total_saved:,} "
+                f"| Current batch: {len(batch):,} "
+                f"| Existing: {len(existing_ids):,}"
             )
 
-            print("Waiting 5 seconds...")
+            url = f"{TMDB_BASE_URL}{endpoint}"
+            params = {
+                "api_key": TMDB_API_KEY,
+                "language": "en-US",
+                "include_adult": "false",
+                "include_video": "false",
+                "page": page,
+            }
 
-            time.sleep(5)
+            try:
+                response = session.get(
+                    url,
+                    params=params,
+                    timeout=30,
+                )
+                response.raise_for_status()
 
-    # ========================================================
-    # SAVE REMAINING MOVIES
-    # ========================================================
+                data = response.json()
+                results = data.get("results", [])
+
+                if not results:
+                    print("No more movies found for this category.")
+                    break
+
+                for movie in results:
+                    movie_id = movie.get("id")
+                    if not movie_id:
+                        continue
+
+                    if movie_id in existing_ids:
+                        continue
+
+                    if movie.get("adult") is True:
+                        continue
+
+                    existing_ids.add(movie_id)
+                    batch.append(movie)
+
+                    if len(batch) >= SAVE_BATCH_SIZE:
+                        save_batch_to_csv(batch)
+                        total_saved += len(batch)
+                        print(
+                            f"TOTAL SAVED: {total_saved:,} movies"
+                        )
+                        batch.clear()
+
+                time.sleep(REQUEST_DELAY)
+
+            except requests.RequestException as error:
+                print(f"Error fetching category={category_name} page={page}: {error}")
+                print("Waiting 5 seconds...")
+                time.sleep(5)
 
     if batch:
-
         save_batch_to_csv(batch)
-
         total_saved += len(batch)
-
         batch.clear()
 
     session.close()
@@ -268,3 +368,4 @@ if __name__ == "__main__":
     print()
 
     fetch_movies()
+    dedupe_csv()

@@ -1,14 +1,21 @@
 import React, { useEffect } from "react";
-import { SITE_NAME } from "@/lib/constants";
+import Seo from "@/components/Seo";
+import { SITE_NAME, SITE_DESCRIPTION, SITE_URL } from "@/lib/constants";
 import Breadcrumb from "@/components/Breadcrumb";
 
 export default function DMCA() {
   useEffect(() => {
-    document.title = `DMCA / Copyright | ${SITE_NAME}`;
+    window.scrollTo(0, 0);
   }, []);
 
   return (
     <div className="min-h-screen bg-[#050505] pt-20">
+      <Seo
+        title={`DMCA / Copyright | ${SITE_NAME}`}
+        description={SITE_DESCRIPTION}
+        url={`${SITE_URL}/dmca`}
+        noindex={true}
+      />
       <div className="mx-auto max-w-3xl px-4 py-12 md:px-6">
         <Breadcrumb items={[{ label: "Home", href: "/" }, { label: "DMCA" }]} />
         <h1 className="text-3xl font-extrabold tracking-tight text-white md:text-4xl">DMCA / Copyright Notice</h1>

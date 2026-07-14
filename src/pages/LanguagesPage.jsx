@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { SITE_NAME, LANGUAGES } from "@/lib/constants";
+import Seo from "@/components/Seo";
+import {
+  SITE_NAME,
+  SITE_DESCRIPTION,
+  SITE_URL,
+  LANGUAGES,
+} from "@/lib/constants";
 import Breadcrumb from "@/components/Breadcrumb";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import EmptyState from "@/components/EmptyState";
@@ -40,34 +46,9 @@ export default function LanguagesPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    document.title = `Browse Movies by Language | ${SITE_NAME}`;
-
-    updateMetaDescription();
     loadCounts();
-
     window.scrollTo(0, 0);
   }, []);
-
-  function updateMetaDescription() {
-    const description =
-      `Browse movies by language on ${SITE_NAME}. ` +
-      "Discover English, Hindi, Tamil, Telugu, Malayalam and movies from around the world.";
-
-    let metaDescription = document.querySelector(
-      'meta[name="description"]'
-    );
-
-    if (!metaDescription) {
-      metaDescription = document.createElement("meta");
-      metaDescription.name = "description";
-      document.head.appendChild(metaDescription);
-    }
-
-    metaDescription.setAttribute(
-      "content",
-      description.substring(0, 160)
-    );
-  }
 
   async function loadCounts() {
     setLoading(true);
@@ -140,6 +121,11 @@ export default function LanguagesPage() {
 
   return (
     <div className="min-h-screen bg-[#050505] pt-20">
+      <Seo
+        title={`Browse Movies by Language | ${SITE_NAME}`}
+        description={`Browse movies by language on ${SITE_NAME}. Discover English, Hindi, Tamil, Telugu, Malayalam and movies from around the world.`}
+        url={`${SITE_URL}/languages`}
+      />
       <div className="mx-auto max-w-5xl px-4 md:px-6">
 
         {/* Breadcrumb */}

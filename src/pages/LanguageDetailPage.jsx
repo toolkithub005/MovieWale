@@ -84,35 +84,8 @@ export default function LanguageDetailPage() {
       return;
     }
 
-    document.title =
-      `${lang.name} Movies | ${SITE_NAME}`;
-
-    updateMetaDescription();
     loadInitialMovies();
   }, [langSlug]);
-
-  function updateMetaDescription() {
-    if (!lang) return;
-
-    const description =
-      `Discover popular and latest ${lang.name} movies. ` +
-      `Browse ratings, release dates, trailers and movie information on ${SITE_NAME}.`;
-
-    let metaDescription = document.querySelector(
-      'meta[name="description"]'
-    );
-
-    if (!metaDescription) {
-      metaDescription = document.createElement("meta");
-      metaDescription.name = "description";
-      document.head.appendChild(metaDescription);
-    }
-
-    metaDescription.setAttribute(
-      "content",
-      description.substring(0, 160)
-    );
-  }
 
   function buildEndpoint(page) {
     return (
@@ -239,8 +212,20 @@ export default function LanguageDetailPage() {
     );
   }
 
+  const pageTitle = lang
+    ? `${lang.name} Movies | ${SITE_NAME}`
+    : `Movies by Language | ${SITE_NAME}`;
+  const pageDescription = lang
+    ? `Discover popular and latest ${lang.name} movies on ${SITE_NAME}. Browse ratings, release dates, trailers and movie information.`
+    : SITE_DESCRIPTION;
+
   return (
     <div className="min-h-screen bg-[#050505] pt-20">
+      <Seo
+        title={pageTitle}
+        description={pageDescription}
+        url={`${SITE_URL}/language/${langSlug}`}
+      />
       <div className="mx-auto max-w-7xl px-4 md:px-6">
 
         <Breadcrumb

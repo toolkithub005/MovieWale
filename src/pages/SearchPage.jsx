@@ -5,8 +5,11 @@ import {
 } from "react-router-dom";
 import { Search, Filter } from "lucide-react";
 
+import Seo from "@/components/Seo";
 import {
   SITE_NAME,
+  SITE_DESCRIPTION,
+  SITE_URL,
   LANGUAGES,
 } from "@/lib/constants";
 
@@ -100,35 +103,8 @@ export default function SearchPage() {
       setLoading(false);
     }
 
-    document.title = urlQuery
-      ? `Search: ${urlQuery} | ${SITE_NAME}`
-      : `Search Movies | ${SITE_NAME}`;
-
-    updateMetaDescription(urlQuery);
-
     window.scrollTo(0, 0);
   }, [location.search]);
-
-  function updateMetaDescription(searchQuery) {
-    const description = searchQuery
-      ? `Search results for "${searchQuery}" on ${SITE_NAME}. Discover movie details, ratings, release dates, trailers and cast information.`
-      : `Search movies on ${SITE_NAME}. Discover movie details, ratings, release dates, trailers and cast information.`;
-
-    let metaDescription = document.querySelector(
-      'meta[name="description"]'
-    );
-
-    if (!metaDescription) {
-      metaDescription = document.createElement("meta");
-      metaDescription.name = "description";
-      document.head.appendChild(metaDescription);
-    }
-
-    metaDescription.setAttribute(
-      "content",
-      description.substring(0, 160)
-    );
-  }
 
   async function searchMovies(searchQuery) {
     setLoading(true);
@@ -298,8 +274,20 @@ export default function SearchPage() {
   const hasSearchQuery = Boolean(urlQuery.trim());
   const hasFilters = Boolean(yearFilter || langFilter);
 
+  const pageTitle = urlQuery
+    ? `Search: ${urlQuery} | ${SITE_NAME}`
+    : `Search Movies | ${SITE_NAME}`;
+  const pageDescription = urlQuery
+    ? `Search results for "${urlQuery}" on ${SITE_NAME}. Discover movie details, ratings, release dates, trailers and cast information.`
+    : `Search movies on ${SITE_NAME}. Discover movie details, ratings, release dates, trailers and cast information.`;
+
   return (
     <div className="min-h-screen bg-[#050505] pt-20">
+      <Seo
+        title={pageTitle}
+        description={pageDescription}
+        url={`${SITE_URL}/search?q=${encodeURIComponent(urlQuery)}`}
+      />
       <div className="mx-auto max-w-7xl px-4 md:px-6">
 
         {/* Breadcrumb */}

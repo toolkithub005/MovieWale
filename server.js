@@ -522,6 +522,224 @@ ${xmlUrls}
 
 
 /* ============================================================
+ * DYNAMIC TMDB SITEMAPS
+ * - /sitemap-nowplaying.xml   -> now_playing (only movies NOT in AllMoviesData.csv)
+ * - /sitemap-trending.xml    -> trending/movie/week
+ * - /sitemap-popular.xml     -> movie/popular
+ * These endpoints fetch a small number of TMDB pages and cache results briefly.
+ * ============================================================ */
+
+// Number of TMDB pages to fetch per sitemap endpoint. Can be overridden with
+// the environment variable `SITEMAP_API_PAGES` (use an integer).
+const SITEMAP_API_PAGES = Number.parseInt(process.env.SITEMAP_API_PAGES || "20", 10) || 20; // default: 20 pages
+
+// Cache TTL for dynamic sitemaps. Can be overridden with `SITEMAP_CACHE_TTL_MS`.
+const SITEMAP_CACHE_TTL = Number.parseInt(process.env.SITEMAP_CACHE_TTL_MS || String(1000 * 60 * 5), 10) || 1000 * 60 * 5; // 5 minutes
+
+const sitemapCache = {
+  nowplaying: { ts: 0, xml: null },
+  trending: { ts: 0, xml: null },
+  popular: { ts: 0, xml: null },
+};
+
+// Persist dynamic sitemaps to disk to speed up subsequent requests.
+const SITEMAP_PERSIST = (String(process.env.SITEMAP_PERSIST || "true").toLowerCase() !== "false");
+const SITEMAP_PERSIST_DIR = path.join(__dirname, "sitemaps");
+
+function ensureSitemapDir() {
+  try {
+    if (!fs.existsSync(SITEMAP_PERSIST_DIR)) {
+      fs.mkdirSync(SITEMAP_PERSIST_DIR, { recursive: true });
+    }
+  } catch (err) {
+    console.error("Failed to ensure sitemap dir:", err);
+  }
+}
+
+function persistedSitemapPath(name) {
+  return path.join(SITEMAP_PERSIST_DIR, `${name}.xml`);
+}
+
+function readPersistedSitemapIfFresh(name) {
+  if (!SITEMAP_PERSIST) return null;
+
+  const p = persistedSitemapPath(name);
+  try {
+    if (!fs.existsSync(p)) return null;
+    const stats = fs.statSync(p);
+    const age = Date.now() - stats.mtimeMs;
+    if (age > SITEMAP_CACHE_TTL) return null;
+    return fs.readFileSync(p, "utf-8");
+  } catch (err) {
+    console.error("Failed to read persisted sitemap:", err);
+    return null;
+  }
+}
+
+function writePersistedSitemap(name, xml) {
+  if (!SITEMAP_PERSIST) return;
+  try {
+    ensureSitemapDir();
+    const p = persistedSitemapPath(name);
+    fs.writeFileSync(p, xml, { encoding: "utf-8" });
+  } catch (err) {
+    console.error("Failed to write persisted sitemap:", err);
+  }
+}
+
+async function fetchTmdbPages(endpoint, pages) {
+  const results = [];
+
+  if (!TMDB_API_KEY) return results;
+
+  for (let page = 1; page <= pages; page++) {
+    try {
+      const url = new URL(`${TMDB_BASE_URL}${endpoint}`);
+      url.searchParams.set("api_key", TMDB_API_KEY);
+      url.searchParams.set("page", String(page));
+
+      const resp = await fetch(url);
+      if (!resp.ok) break;
+
+      const data = await resp.json();
+      if (!data || !Array.isArray(data.results) || data.results.length === 0) break;
+
+      results.push(...data.results);
+
+      if (data.total_pages && page >= data.total_pages) break;
+    } catch (err) {
+      console.error("TMDB fetch error:", err);
+      break;
+    }
+  }
+
+  return results;
+}
+
+function moviesToUrlEntries(baseUrl, movies) {
+  return movies
+    .filter((m) => m && (m.id || m.movie_id))
+    .map((m) => {
+      const id = String(m.id || m.movie_id);
+      const title = m.title || m.original_title || "movie";
+      const slug = `${id}-${createSlug(title)}`;
+      return `\n  <url>\n    <loc>${escapeXml(`${baseUrl}/movie/${slug}`)}</loc>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>`;
+    })
+    .join("");
+}
+
+app.get("/sitemap-nowplaying.xml", async (req, res) => {
+  const baseUrl = getBaseUrl(req);
+
+  if (!TMDB_API_KEY) {
+    return res.status(500).type("application/xml").send("<error>TMDB API key missing</error>");
+  }
+
+  const now = Date.now();
+
+  // 1) Serve in-memory cached sitemap if fresh
+  if (sitemapCache.nowplaying.ts && now - sitemapCache.nowplaying.ts < SITEMAP_CACHE_TTL) {
+    return res.status(200).type("application/xml").set("Cache-Control", "public, max-age=300").send(sitemapCache.nowplaying.xml);
+  }
+
+  // 2) Serve persisted sitemap from disk if present and fresh
+  const persisted = readPersistedSitemapIfFresh("nowplaying");
+  if (persisted) {
+    sitemapCache.nowplaying = { ts: now, xml: persisted };
+    return res.status(200).type("application/xml").set("Cache-Control", "public, max-age=300").send(persisted);
+  }
+
+  try {
+    const moviesCsv = loadMoviesFromCsv();
+    const existingIds = new Set(moviesCsv.map((m) => String(m.id)));
+
+    const tmdbMovies = await fetchTmdbPages("/movie/now_playing", SITEMAP_API_PAGES);
+
+    const filtered = tmdbMovies.filter((m) => {
+      const id = String(m.id || "");
+      if (!id) return false;
+      if (isAdultMovie(m.adult)) return false;
+      return !existingIds.has(id);
+    });
+
+    const xmlUrls = moviesToUrlEntries(baseUrl, filtered);
+
+    const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${xmlUrls}\n</urlset>`;
+
+    sitemapCache.nowplaying = { ts: now, xml: sitemap };
+    writePersistedSitemap("nowplaying", sitemap);
+
+    return res.status(200).type("application/xml").set("Cache-Control", "public, max-age=300").send(sitemap);
+  } catch (err) {
+    console.error("sitemap-nowplaying error:", err);
+    return res.status(502).type("text/plain").send("Unable to generate sitemap");
+  }
+});
+
+app.get("/sitemap-trending.xml", async (req, res) => {
+  const baseUrl = getBaseUrl(req);
+
+  const now = Date.now();
+  if (sitemapCache.trending.ts && now - sitemapCache.trending.ts < SITEMAP_CACHE_TTL) {
+    return res.status(200).type("application/xml").set("Cache-Control", "public, max-age=300").send(sitemapCache.trending.xml);
+  }
+
+  const persisted = readPersistedSitemapIfFresh("trending");
+  if (persisted) {
+    sitemapCache.trending = { ts: now, xml: persisted };
+    return res.status(200).type("application/xml").set("Cache-Control", "public, max-age=300").send(persisted);
+  }
+
+  try {
+    const tmdbMovies = await fetchTmdbPages("/trending/movie/week", SITEMAP_API_PAGES);
+    const filtered = tmdbMovies.filter((m) => m && !isAdultMovie(m.adult));
+    const xmlUrls = moviesToUrlEntries(baseUrl, filtered);
+
+    const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${xmlUrls}\n</urlset>`;
+
+    sitemapCache.trending = { ts: now, xml: sitemap };
+    writePersistedSitemap("trending", sitemap);
+
+    return res.status(200).type("application/xml").set("Cache-Control", "public, max-age=300").send(sitemap);
+  } catch (err) {
+    console.error("sitemap-trending error:", err);
+    return res.status(502).type("text/plain").send("Unable to generate sitemap");
+  }
+});
+
+app.get("/sitemap-popular.xml", async (req, res) => {
+  const baseUrl = getBaseUrl(req);
+
+  const now = Date.now();
+  if (sitemapCache.popular.ts && now - sitemapCache.popular.ts < SITEMAP_CACHE_TTL) {
+    return res.status(200).type("application/xml").set("Cache-Control", "public, max-age=300").send(sitemapCache.popular.xml);
+  }
+
+  const persisted = readPersistedSitemapIfFresh("popular");
+  if (persisted) {
+    sitemapCache.popular = { ts: now, xml: persisted };
+    return res.status(200).type("application/xml").set("Cache-Control", "public, max-age=300").send(persisted);
+  }
+
+  try {
+    const tmdbMovies = await fetchTmdbPages("/movie/popular", SITEMAP_API_PAGES);
+    const filtered = tmdbMovies.filter((m) => m && !isAdultMovie(m.adult));
+    const xmlUrls = moviesToUrlEntries(baseUrl, filtered);
+
+    const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${xmlUrls}\n</urlset>`;
+
+    sitemapCache.popular = { ts: now, xml: sitemap };
+    writePersistedSitemap("popular", sitemap);
+
+    return res.status(200).type("application/xml").set("Cache-Control", "public, max-age=300").send(sitemap);
+  } catch (err) {
+    console.error("sitemap-popular error:", err);
+    return res.status(502).type("text/plain").send("Unable to generate sitemap");
+  }
+});
+
+
+/* ============================================================
  * MOVIE SITEMAPS
  * ============================================================ */
 

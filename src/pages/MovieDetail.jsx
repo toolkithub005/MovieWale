@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
@@ -9,10 +10,12 @@ import {
   Loader2,
 } from "lucide-react";
 
+import Seo from "@/components/Seo";
 import {
   getBackdropUrl,
   getPosterUrl,
   SITE_NAME,
+  SITE_URL,
 } from "@/lib/constants";
 
 import Breadcrumb from "@/components/Breadcrumb";
@@ -143,11 +146,15 @@ export default function MovieDetail() {
     params.movieSlug ||
     params.id;
 
-  const [movie, setMovie] =
-    useState(null);
-
-  const [related, setRelated] =
-    useState([]);
+  const [movie, setMovie] = useState(null);
+  const [related, setRelated] = useState([]);
+  const [pageSeo, setPageSeo] = useState({
+    title: null,
+    description: null,
+    url: null,
+    image: null,
+    schema: null,
+  });
 
   const [loading, setLoading] =
     useState(true);
@@ -161,8 +168,7 @@ export default function MovieDetail() {
   const [openingLink, setOpeningLink] =
     useState(false);
 
-  const [linkError, setLinkError] =
-    useState("");
+  const [linkError, setLinkError] = useState("");
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -320,60 +326,51 @@ export default function MovieDetail() {
               item.popularity,
           }));
 
-      setRelated(
-        normalizedRelated
-      );
+      setRelated(normalizedRelated);
 
-      /*
-       * SEO title.
-       */
+      setMovie(normalizedMovie);
+
       const year =
         data.release_date
-          ? data.release_date.substring(
-              0,
-              4
-            )
+          ? data.release_date.substring(0, 4)
           : "";
 
-      document.title =
+      const pageTitle =
         `${data.title}` +
         `${year ? ` (${year})` : ""}` +
         ` – Cast, Trailer & Movie Details | ${SITE_NAME}`;
 
-      /*
-       * SEO description.
-       */
       const description =
         data.overview
-          ? data.overview.substring(
-              0,
-              160
-            )
+          ? data.overview.substring(0, 160)
           : `${data.title} — cast, trailer and movie details on ${SITE_NAME}.`;
 
-      let metaDescription =
-        document.querySelector(
-          'meta[name="description"]'
-        );
+      const schema = {
+        "@context": "https://schema.org",
+        "@type": "Movie",
+        name: data.title,
+        description: data.overview || `${data.title} movie details on ${SITE_NAME}`,
+        url: `${SITE_URL}/movie/${normalizedMovie.slug}`,
+        image: getBackdropUrl(data.backdrop_path, "large") || getPosterUrl(data.poster_path, "large"),
+        datePublished: data.release_date || undefined,
+        duration: data.runtime ? `PT${data.runtime}M` : undefined,
+        genre: data.genres?.map((genre) => genre.name).filter(Boolean),
+        aggregateRating: data.vote_average
+          ? {
+              "@type": "AggregateRating",
+              ratingValue: data.vote_average,
+              ratingCount: data.vote_count,
+            }
+          : undefined,
+      };
 
-      if (!metaDescription) {
-        metaDescription =
-          document.createElement(
-            "meta"
-          );
-
-        metaDescription.name =
-          "description";
-
-        document.head.appendChild(
-          metaDescription
-        );
-      }
-
-      metaDescription.setAttribute(
-        "content",
-        description
-      );
+      setPageSeo({
+        title: pageTitle,
+        description,
+        image: getBackdropUrl(data.backdrop_path, "large") || getPosterUrl(data.poster_path, "large"),
+        url: `${SITE_URL}/movie/${normalizedMovie.slug}`,
+        schema,
+      });
     } catch (err) {
       console.error(
         "Failed to load movie:",
@@ -533,6 +530,14 @@ async function handleExternalLink() {
 
   return (
     <>
+      <Seo
+        title={pageSeo.title}
+        description={pageSeo.description}
+        url={pageSeo.url}
+        image={pageSeo.image}
+        type="video.movie"
+        schema={pageSeo.schema}
+      />
       {/* Backdrop */}
       <div className="relative h-[50vh] min-h-[300px] w-full overflow-hidden md:h-[60vh]">
         {backdropUrl ? (

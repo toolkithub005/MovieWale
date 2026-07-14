@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 
+import Seo from "@/components/Seo";
 import MovieGrid from "@/components/MovieGrid";
 import Breadcrumb from "@/components/Breadcrumb";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import EmptyState from "@/components/EmptyState";
-import { SITE_NAME, CATEGORIES } from "@/lib/constants";
+import { SITE_NAME, SITE_DESCRIPTION, SITE_URL, CATEGORIES } from "@/lib/constants";
 
 const TMDB_API_URL = "/api/tmdb";
 
@@ -71,7 +72,6 @@ export default function MoviesPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    document.title = `All Movies | ${SITE_NAME}`;
     window.scrollTo(0, 0);
   }, []);
 
@@ -211,6 +211,11 @@ export default function MoviesPage() {
 
   return (
     <div className="min-h-screen bg-[#050505] pt-20">
+      <Seo
+        title={category === "all" ? `All Movies | ${SITE_NAME}` : `${categoryName} | ${SITE_NAME}`}
+        description={SITE_DESCRIPTION}
+        url={`${SITE_URL}/movies`}
+      />
       <div className="mx-auto max-w-7xl px-4 md:px-6">
 
         <Breadcrumb

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { GENRES, SITE_NAME } from "@/lib/constants";
+import Seo from "@/components/Seo";
+import { GENRES, SITE_NAME, SITE_DESCRIPTION, SITE_URL } from "@/lib/constants";
 import MovieGrid from "@/components/MovieGrid";
 import GenreNav from "@/components/GenreNav";
 import Breadcrumb from "@/components/Breadcrumb";
@@ -89,11 +90,7 @@ export default function GenrePage() {
     "Genre";
 
   useEffect(() => {
-    document.title =
-      `${genreName} Movies | ${SITE_NAME}`;
-
     window.scrollTo(0, 0);
-
     loadInitialMovies();
   }, [genreSlug]);
 
@@ -232,8 +229,18 @@ export default function GenrePage() {
     }
   }
 
+  const pageTitle = `${genreName} Movies | ${SITE_NAME}`;
+  const pageDescription =
+    `Explore ${genreName} movies on ${SITE_NAME}. ` +
+    `Browse trailers, ratings, release dates, and more for top ${genreName} films.`;
+
   return (
     <div className="min-h-screen bg-[#050505] pt-20">
+      <Seo
+        title={pageTitle}
+        description={pageDescription}
+        url={`${SITE_URL}/genre/${genreSlug}`}
+      />
       <div className="mx-auto max-w-7xl px-4 md:px-6">
 
         <Breadcrumb
